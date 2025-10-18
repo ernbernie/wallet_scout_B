@@ -239,7 +239,7 @@ fn test_numeric_stability_extreme_values() {
 #[test]
 fn test_all_error_paths_recoverable() {
     // Test various malformed data scenarios
-    let test_cases = vec![
+    let test_cases = [
         vec![],         // Empty data
         vec![0u8; 10],  // Too short
         vec![0u8; 50],  // Still too short
@@ -248,7 +248,7 @@ fn test_all_error_paths_recoverable() {
         vec![0u8; 200], // Large valid size
     ];
 
-    for (_i, data) in test_cases.iter().enumerate() {
+    for data in test_cases.iter() {
         let result = parse_spl_token_account(data);
 
         // Should never panic, always return Result

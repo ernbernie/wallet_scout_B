@@ -47,7 +47,7 @@ fn test_summary_output_personal_wallet() {
 
     // Create a personal wallet (few accounts, different mints)
     let mut tokens = Vec::new();
-    let mints = vec!["Mint1", "Mint2", "Mint3"];
+    let mints = ["Mint1", "Mint2", "Mint3"];
 
     for i in 0..5 {
         tokens.push(TokenRow {

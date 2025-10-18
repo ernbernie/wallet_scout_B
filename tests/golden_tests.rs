@@ -1,4 +1,3 @@
-use std::fs;
 use wallet_scout_b::view::TokenRow;
 
 /// Test that JSON output is deterministic

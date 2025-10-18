@@ -17,8 +17,7 @@ fn test_analysis_property_random_wallets() {
         assert!(insights.statistics.max_amount >= insights.statistics.min_amount);
 
         if !tokens.is_empty() {
-            assert!(insights.statistics.total_amount >= 0);
-            assert!(insights.statistics.avg_amount >= 0);
+            // These assertions are always true for u64, but kept for documentation
         }
 
         // Schema version should always be present
@@ -112,7 +111,7 @@ fn test_analysis_overflow_protection() {
 
         // Should never panic or overflow
         assert_eq!(insights.statistics.total_accounts, tokens.len());
-        assert!(insights.statistics.total_amount >= 0);
+        // This assertion is always true for u64, but kept for documentation
 
         Ok(())
     });
