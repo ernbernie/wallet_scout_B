@@ -6,6 +6,8 @@ mod rpc;
 mod parse;
 mod view;
 mod errors;
+mod analysis;
+mod patterns;
 
 use errors::ScoutError;
 
@@ -54,6 +56,14 @@ struct Args {
     /// Show debug information with raw offsets and data
     #[arg(long)]
     debug: bool,
+    
+    /// Run wallet analysis and show insights
+    #[arg(long)]
+    analyze: bool,
+    
+    /// Show only high-risk wallets
+    #[arg(long)]
+    risk_level: Option<String>,
     
     /// Custom RPC URL (overrides cluster selection)
     #[arg(long)]
@@ -140,17 +150,98 @@ async fn main() -> Result<()> {
         parsed.push(view::TokenRow::from_view(item.pubkey, &view));
     }
 
-    // 4) Output
-    if args.json {
-        let output = view::WalletOut {
-            sol,
-            total_tokens: parsed.len(),
-            tokens: parsed,
-        };
-        println!("{}", serde_json::to_string_pretty(&output)?);
+    // 4) Analysis (if requested)
+    if args.analyze {
+        println!("Running wallet analysis...");
+        let analyzer = analysis::WalletAnalyzer::new();
+        let insights = analyzer.analyze(&parsed);
+        
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&insights)?);
+        } else {
+            print_analysis(&insights)?;
+        }
     } else {
-        view::print_table(sol, &parsed)?;
+        // 5) Standard output
+        if args.json {
+            let output = view::WalletOut {
+                sol,
+                total_tokens: parsed.len(),
+                tokens: parsed,
+            };
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        } else {
+            view::print_table(sol, &parsed)?;
+        }
     }
 
+    Ok(())
+}
+
+/// Print wallet analysis in human-readable format
+fn print_analysis(insights: &analysis::WalletInsights) -> anyhow::Result<()> {
+    println!("┌─────────────────────────────────────────────────────────────────────────────────┐");
+    println!("│ Wallet Analysis Report                                                          │");
+    println!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    println!();
+    
+    // Wallet type and risk level
+    println!("🔍 Wallet Type: {:?}", insights.wallet_type);
+    println!("⚠️  Risk Level: {:?}", insights.risk_level);
+    println!();
+    
+    // Statistics
+    println!("📊 Statistics:");
+    println!("  • Total Accounts: {}", insights.statistics.total_accounts);
+    println!("  • Total Amount: {}", insights.statistics.total_amount);
+    println!("  • Unique Mints: {}", insights.statistics.unique_mints);
+    println!("  • Max Amount: {}", insights.statistics.max_amount);
+    println!("  • Avg Amount: {}", insights.statistics.avg_amount);
+    println!("  • Amount Variance: {:.2}", insights.statistics.variance);
+    println!();
+    
+    // Account distribution
+    println!("📈 Account Distribution:");
+    println!("  • Empty: {} ({:.1}%)", 
+        insights.statistics.empty_accounts,
+        (insights.statistics.empty_accounts as f64 / insights.statistics.total_accounts as f64) * 100.0);
+    println!("  • Small: {} ({:.1}%)", 
+        insights.statistics.small_accounts,
+        (insights.statistics.small_accounts as f64 / insights.statistics.total_accounts as f64) * 100.0);
+    println!("  • Medium: {} ({:.1}%)", 
+        insights.statistics.medium_accounts,
+        (insights.statistics.medium_accounts as f64 / insights.statistics.total_accounts as f64) * 100.0);
+    println!("  • Large: {} ({:.1}%)", 
+        insights.statistics.large_accounts,
+        (insights.statistics.large_accounts as f64 / insights.statistics.total_accounts as f64) * 100.0);
+    println!();
+    
+    // Detected patterns
+    if !insights.patterns.is_empty() {
+        println!("🎯 Detected Patterns:");
+        for pattern in &insights.patterns {
+            println!("  • {} (confidence: {:.1}%, risk: {:?})", 
+                pattern.name, pattern.confidence * 100.0, pattern.risk_level);
+            for evidence in &pattern.evidence {
+                println!("    - {}", evidence);
+            }
+        }
+        println!();
+    }
+    
+    // Summary
+    println!("📝 Summary:");
+    println!("  {}", insights.summary);
+    println!();
+    
+    // Recommendations
+    if !insights.recommendations.is_empty() {
+        println!("💡 Recommendations:");
+        for recommendation in &insights.recommendations {
+            println!("  {}", recommendation);
+        }
+        println!();
+    }
+    
     Ok(())
 }
