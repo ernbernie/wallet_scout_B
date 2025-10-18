@@ -15,7 +15,7 @@ fn test_analysis_pipeline_distribution_wallet() {
             account: format!("DistributionAccount{}", i),
             mint: mint.to_string(),
             owner: "DistributionOwner".to_string(),
-            amount_raw: if i % 10 == 0 { 0 } else { (i as u64 + 1) * 1_000_000 },
+            amount_raw: if i % 10 == 0 { 0 } else { (i as u64 + 1) * 2_000_000_000 },
             state: 0,
             delegated_amount: 0,
             delegate: None,
@@ -91,7 +91,7 @@ fn test_analysis_pipeline_exchange_wallet() {
     for i in 0..50 {
         tokens.push(TokenRow {
             account: format!("ExchangeAccount{}", i),
-            mint: format!("Mint{}", i % 10), // 10 different mints
+            mint: format!("Mint{}", i), // 50 different mints
             owner: "ExchangeOwner".to_string(),
             amount_raw: 1_000_000,
             state: 0,
@@ -109,7 +109,7 @@ fn test_analysis_pipeline_exchange_wallet() {
     
     // Check statistics
     assert_eq!(insights.statistics.total_accounts, 50);
-    assert_eq!(insights.statistics.unique_mints, 10);
+    assert_eq!(insights.statistics.unique_mints, 50);
     
     // Check summary
     assert!(insights.summary.contains("Exchange-like wallet detected"));
@@ -126,9 +126,9 @@ fn test_analysis_pipeline_high_value_wallet() {
     for i in 0..10 {
         tokens.push(TokenRow {
             account: format!("HighValueAccount{}", i),
-            mint: format!("HighValueMint{}", i),
+            mint: "HighValueMint".to_string(),
             owner: "HighValueOwner".to_string(),
-            amount_raw: 10_000_000_000_000, // Very high amount
+            amount_raw: 15_000_000_000_000, // Very high amount
             state: 0,
             delegated_amount: 0,
             delegate: None,
@@ -144,7 +144,7 @@ fn test_analysis_pipeline_high_value_wallet() {
     
     // Check statistics
     assert_eq!(insights.statistics.total_accounts, 10);
-    assert_eq!(insights.statistics.unique_mints, 10);
+    assert_eq!(insights.statistics.unique_mints, 1);
     assert!(insights.statistics.total_amount > 100_000_000_000_000);
     
     // Check summary
@@ -162,9 +162,9 @@ fn test_analysis_pipeline_suspicious_wallet() {
     for i in 0..2000 {  // Extremely high account count
         tokens.push(TokenRow {
             account: format!("SuspiciousAccount{}", i),
-            mint: "SuspiciousMint".to_string(),
+            mint: format!("SuspiciousMint{}", i % 100), // 100 different mints
             owner: "SuspiciousOwner".to_string(),
-            amount_raw: 0, // Empty accounts
+            amount_raw: if i % 100 == 0 { 1_000_000_000_000_000 } else { 0 }, // Mostly empty with some very high amounts
             state: 0,
             delegated_amount: 0,
             delegate: None,
@@ -180,7 +180,7 @@ fn test_analysis_pipeline_suspicious_wallet() {
     
     // Check statistics
     assert_eq!(insights.statistics.total_accounts, 2000);
-    assert_eq!(insights.statistics.unique_mints, 1);
+    assert_eq!(insights.statistics.unique_mints, 100);
     
     // Check summary
     assert!(insights.summary.contains("Suspicious activity detected"));

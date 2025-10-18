@@ -1,5 +1,6 @@
 use crate::view::TokenRow;
-use crate::analysis::{Pattern, PatternMatch, RiskLevel};
+use crate::analysis::{Pattern, PatternMatch, RiskLevel, StructuredEvidence};
+use std::collections::BTreeMap;
 
 /// Detects distribution wallets (many accounts, same mint, varying amounts)
 pub struct DistributionWalletPattern;
@@ -22,10 +23,10 @@ impl Pattern for DistributionWalletPattern {
             return None;
         }
         
-        // Calculate amount variance
+        // Calculate amount variance with overflow protection
         let amounts: Vec<u64> = tokens.iter().map(|t| t.amount_raw).collect();
-        let total_amount: u64 = amounts.iter().sum();
-        let avg_amount = total_amount / tokens.len() as u64;
+        let total_amount: u128 = amounts.iter().map(|&x| x as u128).sum();
+        let avg_amount = (total_amount / tokens.len() as u128) as u64;
         
         let variance = if tokens.len() > 1 {
             let mean = avg_amount as f64;
@@ -51,9 +52,29 @@ impl Pattern for DistributionWalletPattern {
                 format!("Contains large amounts (max: {})", amounts.iter().max().unwrap_or(&0)),
             ];
             
+            let mut thresholds = BTreeMap::new();
+            thresholds.insert("min_accounts".to_string(), 50.0);
+            thresholds.insert("variance_threshold".to_string(), avg_amount as f64 * 0.1);
+            thresholds.insert("large_amount_threshold".to_string(), 1_000_000_000.0);
+            
+            let mut features = BTreeMap::new();
+            features.insert("account_count".to_string(), tokens.len() as f64);
+            features.insert("variance".to_string(), variance);
+            features.insert("avg_amount".to_string(), avg_amount as f64);
+            features.insert("max_amount".to_string(), *amounts.iter().max().unwrap_or(&0) as f64);
+            
+            let mut counts = BTreeMap::new();
+            counts.insert("total_accounts".to_string(), tokens.len());
+            counts.insert("large_amount_accounts".to_string(), amounts.iter().filter(|&&x| x > 1_000_000_000).count());
+            
             Some(PatternMatch {
                 confidence,
                 evidence,
+                structured_evidence: StructuredEvidence {
+                    thresholds,
+                    features,
+                    counts,
+                },
                 risk_level: RiskLevel::Medium,
             })
         } else {
@@ -100,9 +121,31 @@ impl Pattern for AirdropWalletPattern {
                 format!("{} one-token accounts", one_token_accounts),
             ];
             
+            let mut thresholds = BTreeMap::new();
+            thresholds.insert("min_accounts".to_string(), 20.0);
+            thresholds.insert("small_amount_threshold".to_string(), 100_000_000.0);
+            thresholds.insert("very_small_threshold".to_string(), 1_000_000.0);
+            thresholds.insert("one_token_threshold".to_string(), 10.0);
+            
+            let mut features = BTreeMap::new();
+            features.insert("account_count".to_string(), tokens.len() as f64);
+            features.insert("small_ratio".to_string(), small_ratio);
+            features.insert("very_small_ratio".to_string(), very_small_ratio);
+            
+            let mut counts = BTreeMap::new();
+            counts.insert("total_accounts".to_string(), tokens.len());
+            counts.insert("small_amount_accounts".to_string(), small_amounts);
+            counts.insert("very_small_accounts".to_string(), very_small_amounts);
+            counts.insert("one_token_accounts".to_string(), one_token_accounts);
+            
             Some(PatternMatch {
                 confidence,
                 evidence,
+                structured_evidence: StructuredEvidence {
+                    thresholds,
+                    features,
+                    counts,
+                },
                 risk_level: RiskLevel::Low,
             })
         } else {
@@ -125,7 +168,7 @@ impl Pattern for ExchangeWalletPattern {
         }
         
         // Count unique mints
-        let unique_mints: std::collections::HashSet<_> = tokens.iter().map(|t| &t.mint).collect();
+        let unique_mints: indexmap::IndexSet<_> = tokens.iter().map(|t| &t.mint).collect();
         let mint_diversity = unique_mints.len() as f64 / tokens.len() as f64;
         
         // Check for high mint diversity (exchanges have many different tokens)
@@ -136,9 +179,28 @@ impl Pattern for ExchangeWalletPattern {
                 format!("{:.1}% mint diversity", mint_diversity * 100.0),
             ];
             
+            let mut thresholds = BTreeMap::new();
+            thresholds.insert("min_accounts".to_string(), 10.0);
+            thresholds.insert("mint_diversity_threshold".to_string(), 0.3);
+            thresholds.insert("min_unique_mints".to_string(), 5.0);
+            
+            let mut features = BTreeMap::new();
+            features.insert("account_count".to_string(), tokens.len() as f64);
+            features.insert("unique_mint_count".to_string(), unique_mints.len() as f64);
+            features.insert("mint_diversity".to_string(), mint_diversity);
+            
+            let mut counts = BTreeMap::new();
+            counts.insert("total_accounts".to_string(), tokens.len());
+            counts.insert("unique_mints".to_string(), unique_mints.len());
+            
             Some(PatternMatch {
                 confidence,
                 evidence,
+                structured_evidence: StructuredEvidence {
+                    thresholds,
+                    features,
+                    counts,
+                },
                 risk_level: RiskLevel::Medium,
             })
         } else {
@@ -163,8 +225,8 @@ impl Pattern for SuspiciousActivityPattern {
             suspicious_indicators.push(format!("Extremely high account count: {}", tokens.len()));
         }
         
-        // Check for extremely high total value
-        let total_value: u64 = tokens.iter().map(|t| t.amount_raw).sum();
+        // Check for extremely high total value with overflow protection
+        let total_value: u128 = tokens.iter().map(|t| t.amount_raw as u128).sum();
         if total_value > 1_000_000_000_000_000 {
             suspicious_indicators.push(format!("Extremely high total value: {}", total_value));
         }
@@ -188,9 +250,33 @@ impl Pattern for SuspiciousActivityPattern {
         
         if suspicious_indicators.len() >= 2 {
             let confidence = (suspicious_indicators.len() as f64 / 4.0).min(1.0);
+            
+            let mut thresholds = BTreeMap::new();
+            thresholds.insert("max_account_count".to_string(), 1000.0);
+            thresholds.insert("max_total_value".to_string(), 1_000_000_000_000_000.0);
+            thresholds.insert("max_same_mint_accounts".to_string(), 500.0);
+            thresholds.insert("max_empty_ratio".to_string(), 0.8);
+            thresholds.insert("min_suspicious_indicators".to_string(), 2.0);
+            
+            let mut features = BTreeMap::new();
+            features.insert("account_count".to_string(), tokens.len() as f64);
+            features.insert("total_value".to_string(), total_value as f64);
+            features.insert("empty_ratio".to_string(), empty_ratio);
+            features.insert("suspicious_indicators".to_string(), suspicious_indicators.len() as f64);
+            
+            let mut counts = BTreeMap::new();
+            counts.insert("total_accounts".to_string(), tokens.len());
+            counts.insert("empty_accounts".to_string(), empty_accounts);
+            counts.insert("suspicious_indicators".to_string(), suspicious_indicators.len());
+            
             Some(PatternMatch {
                 confidence,
                 evidence: suspicious_indicators,
+                structured_evidence: StructuredEvidence {
+                    thresholds,
+                    features,
+                    counts,
+                },
                 risk_level: RiskLevel::High,
             })
         } else {
@@ -208,7 +294,7 @@ impl Pattern for HighValueWalletPattern {
     }
     
     fn detect(&self, tokens: &[TokenRow]) -> Option<PatternMatch> {
-        let total_value: u64 = tokens.iter().map(|t| t.amount_raw).sum();
+        let total_value: u128 = tokens.iter().map(|t| t.amount_raw as u128).sum();
         let max_amount = tokens.iter().map(|t| t.amount_raw).max().unwrap_or(0);
         
         // Check for high total value
@@ -225,9 +311,27 @@ impl Pattern for HighValueWalletPattern {
                 format!("High-value accounts: {}", high_individual_accounts),
             ];
             
+            let mut thresholds = BTreeMap::new();
+            thresholds.insert("high_total_value_threshold".to_string(), 10_000_000_000_000.0);
+            thresholds.insert("high_individual_threshold".to_string(), 1_000_000_000_000.0);
+            
+            let mut features = BTreeMap::new();
+            features.insert("total_value".to_string(), total_value as f64);
+            features.insert("max_amount".to_string(), max_amount as f64);
+            features.insert("high_individual_accounts".to_string(), high_individual_accounts as f64);
+            
+            let mut counts = BTreeMap::new();
+            counts.insert("total_accounts".to_string(), tokens.len());
+            counts.insert("high_value_accounts".to_string(), high_individual_accounts);
+            
             Some(PatternMatch {
                 confidence,
                 evidence,
+                structured_evidence: StructuredEvidence {
+                    thresholds,
+                    features,
+                    counts,
+                },
                 risk_level: RiskLevel::Medium,
             })
         } else {

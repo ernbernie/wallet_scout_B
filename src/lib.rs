@@ -4,3 +4,4 @@ pub mod view;
 pub mod errors;
 pub mod analysis;
 pub mod patterns;
+pub mod metrics;

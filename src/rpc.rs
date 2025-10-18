@@ -4,23 +4,33 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
+use std::sync::OnceLock;
+use rand::Rng;
+
+// Global singleton HTTP client
+static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
 
 pub struct Rpc {
     url: String,
-    http: Client,
 }
 
 impl Rpc {
     pub fn new(url: &str) -> Result<Self> {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(ScoutError::Network)?;
+        // Initialize the global client if not already done
+        HTTP_CLIENT.get_or_init(|| {
+            Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to create HTTP client")
+        });
         
         Ok(Self {
             url: url.to_string(),
-            http,
         })
+    }
+    
+    fn get_client() -> &'static Client {
+        HTTP_CLIENT.get().expect("HTTP client not initialized")
     }
 
     /// Make JSON-RPC call with exponential backoff retry
@@ -51,7 +61,10 @@ impl Rpc {
                 }
                 Err(_e) if retries > 0 => {
                     retries -= 1;
-                    sleep(delay).await;
+                    // Add jitter to prevent thundering herd
+                    let jitter = rand::thread_rng().gen_range(0.0..0.1);
+                    let jittered_delay = delay.mul_f64(1.0 + jitter);
+                    sleep(jittered_delay).await;
                     delay *= 2; // Exponential backoff
                 }
                 Err(e) => return Err(e),
@@ -63,7 +76,7 @@ impl Rpc {
         &self,
         payload: &serde_json::Value,
     ) -> Result<T> {
-        let resp = self.http
+        let resp = Self::get_client()
             .post(&self.url)
             .json(payload)
             .send()

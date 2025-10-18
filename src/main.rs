@@ -1,6 +1,8 @@
 use clap::{Parser, ValueEnum};
 use anyhow::Result;
 use std::io::{self, Write};
+use std::time::Duration;
+use tracing::{info, warn, error};
 
 mod rpc;
 mod parse;
@@ -8,6 +10,7 @@ mod view;
 mod errors;
 mod analysis;
 mod patterns;
+mod metrics;
 
 use errors::ScoutError;
 
@@ -68,12 +71,49 @@ struct Args {
     /// Custom RPC URL (overrides cluster selection)
     #[arg(long)]
     rpc_url: Option<String>,
+    
+    /// Global timeout in seconds for the entire operation
+    #[arg(long, default_value = "60")]
+    global_timeout: u64,
+    
+    /// Write metrics to file
+    #[arg(long)]
+    metrics_file: Option<String>,
+    
+    /// Log level (error, warn, info, debug, trace)
+    #[arg(long, default_value = "info")]
+    log_level: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(&args.log_level)
+        .init();
+    
+    info!("Starting wallet scout with global timeout: {}s", args.global_timeout);
+    
+    // Set up global timeout
+    let global_timeout = Duration::from_secs(args.global_timeout);
+    let timeout_result = tokio::time::timeout(global_timeout, async {
+        run_wallet_scout(args).await
+    }).await;
+    
+    match timeout_result {
+        Ok(result) => result,
+        Err(_) => {
+            eprintln!("Operation timed out after {} seconds", global_timeout.as_secs());
+            std::process::exit(124); // Standard timeout exit code
+        }
+    }
+}
 
+async fn run_wallet_scout(args: Args) -> Result<()> {
+    let mut metrics = metrics::MetricsCollector::new();
+    
     // Prompt for address if missing
     let address = match args.address {
         Some(a) => a,
@@ -132,6 +172,8 @@ async fn main() -> Result<()> {
     // 3) Parse zero-copy views
     let mut parsed = Vec::with_capacity(token_accounts.len());
     for item in token_accounts {
+        let parse_start = std::time::Instant::now();
+        
         let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &item.data_base64)
             .map_err(|e| ScoutError::Decode {
                 field: "base64_data".to_string(),
@@ -140,6 +182,9 @@ async fn main() -> Result<()> {
             })?;
         
         let view = parse::parse_spl_token_account(&bytes)?;
+        
+        // Record parse time
+        metrics.record_parse_time(parse_start.elapsed());
         
         // Show debug info if requested
         if args.debug {
@@ -165,6 +210,7 @@ async fn main() -> Result<()> {
         // 5) Standard output
         if args.json {
             let output = view::WalletOut {
+                schema_version: "1.0.0".to_string(),
                 sol,
                 total_tokens: parsed.len(),
                 tokens: parsed,
@@ -173,6 +219,14 @@ async fn main() -> Result<()> {
         } else {
             view::print_table(sol, &parsed)?;
         }
+    }
+
+    // Write metrics if requested
+    if let Some(metrics_file) = args.metrics_file {
+        let final_metrics = metrics.finalize();
+        let metrics_json = serde_json::to_string_pretty(&final_metrics)?;
+        std::fs::write(&metrics_file, metrics_json)?;
+        info!("Metrics written to {}", metrics_file);
     }
 
     Ok(())

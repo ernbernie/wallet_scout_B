@@ -1,5 +1,6 @@
 use serde::Serialize;
 use crate::parse::TokenAccountView;
+use proptest::prelude::*;
 
 /// Display model for a token account row
 /// Only allocate here - convert from zero-copy views to owned strings
@@ -33,6 +34,7 @@ impl TokenRow {
 /// Complete wallet output for JSON serialization
 #[derive(Serialize, Debug)]
 pub struct WalletOut {
+    pub schema_version: String,
     pub sol: f64,
     pub tokens: Vec<TokenRow>,
     pub total_tokens: usize,
@@ -81,6 +83,37 @@ pub fn print_table(sol: f64, rows: &[TokenRow]) -> anyhow::Result<()> {
     println!("Total SPL token accounts: {}", rows.len());
     
     Ok(())
+}
+
+impl Arbitrary for TokenRow {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+        (
+            any::<String>(),
+            any::<String>(),
+            any::<String>(),
+            any::<u64>(),
+            any::<u8>(),
+            any::<u64>(),
+            any::<Option<String>>(),
+            any::<Option<String>>(),
+        )
+            .prop_map(|(account, mint, owner, amount_raw, state, delegated_amount, delegate, close_authority)| {
+                TokenRow {
+                    account,
+                    mint,
+                    owner,
+                    amount_raw,
+                    state,
+                    delegated_amount,
+                    delegate,
+                    close_authority,
+                }
+            })
+            .boxed()
+    }
 }
 
 /// Print debug information showing offsets and raw data

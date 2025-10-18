@@ -1,6 +1,7 @@
 use crate::view::TokenRow;
 use crate::patterns::{DistributionWalletPattern, AirdropWalletPattern, ExchangeWalletPattern, SuspiciousActivityPattern, HighValueWalletPattern};
 use serde::Serialize;
+use indexmap::IndexSet;
 
 /// Core analysis framework for wallet pattern detection
 pub struct WalletAnalyzer {
@@ -37,6 +38,7 @@ impl WalletAnalyzer {
         let recommendations = self.generate_recommendations(&wallet_type, &risk_level, &detected_patterns);
         
         WalletInsights {
+            schema_version: "1.0.0".to_string(),
             wallet_type,
             risk_level,
             patterns: detected_patterns,
@@ -55,6 +57,7 @@ impl WalletAnalyzer {
                     name: pattern.name().to_string(),
                     confidence: match_result.confidence,
                     evidence: match_result.evidence,
+                    structured_evidence: match_result.structured_evidence,
                     risk_level: match_result.risk_level,
                 });
             }
@@ -69,13 +72,16 @@ impl WalletAnalyzer {
         }
         
         let total_accounts = tokens.len();
-        let total_amount: u64 = tokens.iter().map(|t| t.amount_raw).sum();
-        let unique_mints = tokens.iter().map(|t| &t.mint).collect::<std::collections::HashSet<_>>().len();
+        // Use u128 to prevent overflow during aggregation
+        let total_amount: u128 = tokens.iter().map(|t| t.amount_raw as u128).sum();
+        let unique_mints = tokens.iter().map(|t| &t.mint).collect::<IndexSet<_>>().len();
         
         let amounts: Vec<u64> = tokens.iter().map(|t| t.amount_raw).collect();
         let max_amount = amounts.iter().max().copied().unwrap_or(0);
         let min_amount = amounts.iter().min().copied().unwrap_or(0);
-        let avg_amount = if total_accounts > 0 { total_amount / total_accounts as u64 } else { 0 };
+        let avg_amount = if total_accounts > 0 { 
+            (total_amount / total_accounts as u128) as u64 
+        } else { 0 };
         
         // Calculate variance for amount distribution
         let variance = if total_accounts > 1 {
@@ -96,7 +102,7 @@ impl WalletAnalyzer {
         
         WalletStatistics {
             total_accounts,
-            total_amount,
+            total_amount: total_amount as u64, // Safe downcast after u128 arithmetic
             unique_mints,
             max_amount,
             min_amount,
@@ -242,7 +248,16 @@ pub trait Pattern {
 pub struct PatternMatch {
     pub confidence: f64,
     pub evidence: Vec<String>,
+    pub structured_evidence: StructuredEvidence,
     pub risk_level: RiskLevel,
+}
+
+/// Structured evidence for machine-readable analysis
+#[derive(Debug, Clone, Serialize)]
+pub struct StructuredEvidence {
+    pub thresholds: std::collections::BTreeMap<String, f64>,
+    pub features: std::collections::BTreeMap<String, f64>,
+    pub counts: std::collections::BTreeMap<String, usize>,
 }
 
 /// Detected pattern with metadata
@@ -251,12 +266,14 @@ pub struct DetectedPattern {
     pub name: String,
     pub confidence: f64,
     pub evidence: Vec<String>,
+    pub structured_evidence: StructuredEvidence,
     pub risk_level: RiskLevel,
 }
 
 /// Comprehensive wallet analysis results
 #[derive(Debug, Clone, Serialize)]
 pub struct WalletInsights {
+    pub schema_version: String,
     pub wallet_type: WalletType,
     pub risk_level: RiskLevel,
     pub patterns: Vec<DetectedPattern>,
