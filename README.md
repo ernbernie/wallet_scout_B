@@ -2,6 +2,9 @@
 
 A zero-copy CLI wallet scout for Solana that provides clean, actionable insights about wallet activity.
 
+![wallet scout b](https://github.com/user-attachments/assets/55c949e6-e7cb-46f5-a224-4efa6efcc306)
+
+
 ## Quick Start
 
 ```bash
