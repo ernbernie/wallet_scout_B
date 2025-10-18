@@ -40,50 +40,6 @@ pub struct WalletOut {
     pub total_tokens: usize,
 }
 
-/// Print human-readable table output
-pub fn print_table(sol: f64, rows: &[TokenRow]) -> anyhow::Result<()> {
-    println!("┌─────────────────────────────────────────────────────────────────────────────────┐");
-    println!("│ Wallet Scout - Solana Account Analysis                                        │");
-    println!("└─────────────────────────────────────────────────────────────────────────────────┘");
-    println!();
-    
-    println!("SOL Balance: {:.9} SOL", sol);
-    println!();
-    
-    if rows.is_empty() {
-        println!("No SPL token accounts found.");
-        return Ok(());
-    }
-    
-    println!("SPL Token Accounts ({} found):", rows.len());
-    println!();
-    
-    // Print header
-    println!("{:<44}  {:<44}  {:<44}  {:>16}  {:>16}", 
-        "Account", "Mint", "Owner", "Amount (raw)", "Delegated");
-    println!("{}", "─".repeat(150));
-    
-    // Print rows
-    for row in rows {
-        let _delegate_info = if let Some(ref delegate) = row.delegate {
-            format!("{}", delegate)
-        } else {
-            "None".to_string()
-        };
-        
-        println!("{:<44}  {:<44}  {:<44}  {:>16}  {:>16}", 
-            row.account, 
-            row.mint, 
-            row.owner, 
-            row.amount_raw,
-            row.delegated_amount);
-    }
-    
-    println!();
-    println!("Total SPL token accounts: {}", rows.len());
-    
-    Ok(())
-}
 
 impl Arbitrary for TokenRow {
     type Parameters = ();
@@ -114,6 +70,110 @@ impl Arbitrary for TokenRow {
             })
             .boxed()
     }
+}
+
+/// Print summary dashboard with executive summary and key statistics
+pub fn print_summary(sol: f64, _tokens: &[TokenRow], insights: &crate::analysis::WalletInsights) -> anyhow::Result<()> {
+    println!("┌─────────────────────────────────────────────────────────────────────────────────┐");
+    println!("│ Wallet Scout - Summary Dashboard                                                │");
+    println!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    println!();
+    
+    // Executive Summary
+    println!("🔍 Executive Summary");
+    println!("{}", insights.summary);
+    println!();
+    
+    // Key Statistics Table
+    println!("📊 Key Statistics");
+    println!("┌─────────────────────────────────────────────────────────────────────────────────┐");
+    println!("│ Total Accounts: {:<8} │ Unique Mints: {:<8} │ Total Value: {:<15} │", 
+        insights.statistics.total_accounts, 
+        insights.statistics.unique_mints,
+        format_number(insights.statistics.total_amount));
+    println!("│ SOL Balance: {:<12} │ Max Account: {:<15} │ Avg Account: {:<15} │", 
+        format_sol(sol),
+        format_number(insights.statistics.max_amount),
+        format_number(insights.statistics.avg_amount));
+    println!("│ Wallet Type: {:<12} │ Risk Level: {:<12} │ Empty Accounts: {:<8} │", 
+        format_wallet_type(&insights.wallet_type),
+        format_risk_level(&insights.risk_level),
+        insights.statistics.empty_accounts);
+    println!("└─────────────────────────────────────────────────────────────────────────────────┘");
+    println!();
+    
+    // Risk Assessment
+    println!("⚠️  Risk Assessment: {} - {}", 
+        format_risk_level(&insights.risk_level),
+        get_risk_description(&insights.risk_level));
+    
+    // Recommendations
+    if !insights.recommendations.is_empty() {
+        println!("💡 Recommendation: {}", insights.recommendations[0]);
+    }
+    
+    println!();
+    
+    Ok(())
+}
+
+/// Format large numbers with commas
+fn format_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
+}
+
+/// Format SOL balance
+fn format_sol(sol: f64) -> String {
+    if sol >= 1_000_000.0 {
+        format!("{:.1}M SOL", sol / 1_000_000.0)
+    } else if sol >= 1_000.0 {
+        format!("{:.1}K SOL", sol / 1_000.0)
+    } else {
+        format!("{:.6} SOL", sol)
+    }
+}
+
+/// Format wallet type for display
+fn format_wallet_type(wallet_type: &crate::analysis::WalletType) -> String {
+    match wallet_type {
+        crate::analysis::WalletType::Personal => "Personal".to_string(),
+        crate::analysis::WalletType::Distribution => "Distribution".to_string(),
+        crate::analysis::WalletType::Airdrop => "Airdrop".to_string(),
+        crate::analysis::WalletType::Exchange => "Exchange".to_string(),
+        crate::analysis::WalletType::HighValue => "High Value".to_string(),
+        crate::analysis::WalletType::Suspicious => "Suspicious".to_string(),
+        crate::analysis::WalletType::Unknown => "Unknown".to_string(),
+    }
+}
+
+/// Format risk level for display
+fn format_risk_level(risk_level: &crate::analysis::RiskLevel) -> String {
+    match risk_level {
+        crate::analysis::RiskLevel::VeryLow => "Very Low".to_string(),
+        crate::analysis::RiskLevel::Low => "Low".to_string(),
+        crate::analysis::RiskLevel::Medium => "Medium".to_string(),
+        crate::analysis::RiskLevel::High => "High".to_string(),
+        crate::analysis::RiskLevel::Critical => "Critical".to_string(),
+    }
+}
+
+/// Get risk description
+fn get_risk_description(risk_level: &crate::analysis::RiskLevel) -> String {
+    match risk_level {
+        crate::analysis::RiskLevel::VeryLow => "Minimal risk indicators detected",
+        crate::analysis::RiskLevel::Low => "Low risk indicators detected",
+        crate::analysis::RiskLevel::Medium => "Moderate risk indicators detected",
+        crate::analysis::RiskLevel::High => "High risk indicators detected",
+        crate::analysis::RiskLevel::Critical => "Critical risk indicators detected",
+    }.to_string()
 }
 
 /// Print debug information showing offsets and raw data

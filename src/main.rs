@@ -83,6 +83,10 @@ struct Args {
     /// Log level (error, warn, info, debug, trace)
     #[arg(long, default_value = "info")]
     log_level: String,
+    
+    /// Show summary dashboard (default behavior)
+    #[arg(long)]
+    summary: bool,
 }
 
 #[tokio::main]
@@ -206,19 +210,20 @@ async fn run_wallet_scout(args: Args) -> Result<()> {
         } else {
             print_analysis(&insights)?;
         }
+    } else if args.summary || !args.json {
+        // 5) Summary dashboard output (default behavior)
+        let analyzer = analysis::WalletAnalyzer::new();
+        let insights = analyzer.analyze(&parsed);
+        view::print_summary(sol, &parsed, &insights)?;
     } else {
-        // 5) Standard output
-        if args.json {
-            let output = view::WalletOut {
-                schema_version: "1.0.0".to_string(),
-                sol,
-                total_tokens: parsed.len(),
-                tokens: parsed,
-            };
-            println!("{}", serde_json::to_string_pretty(&output)?);
-        } else {
-            view::print_table(sol, &parsed)?;
-        }
+        // 6) JSON output only when explicitly requested
+        let output = view::WalletOut {
+            schema_version: "1.0.0".to_string(),
+            sol,
+            total_tokens: parsed.len(),
+            tokens: parsed,
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
     // Write metrics if requested
