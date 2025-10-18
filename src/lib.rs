@@ -1,7 +1,7 @@
-pub mod rpc;
-pub mod parse;
-pub mod view;
-pub mod errors;
 pub mod analysis;
-pub mod patterns;
+pub mod errors;
 pub mod metrics;
+pub mod parse;
+pub mod patterns;
+pub mod rpc;
+pub mod view;

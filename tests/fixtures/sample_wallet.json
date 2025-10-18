@@ -1,23 +1,13 @@
 {
   "schema_version": "1.0.0",
   "sol": 1.5,
-  "total_tokens": 2,
+  "total_tokens": 100,
   "tokens": [
     {
       "account": "Account1",
-      "mint": "Mint1",
-      "owner": "Owner1",
-      "amount_raw": 1000000,
-      "state": 0,
-      "delegated_amount": 0,
-      "delegate": null,
-      "close_authority": null
-    },
-    {
-      "account": "Account2", 
-      "mint": "Mint2",
-      "owner": "Owner2",
-      "amount_raw": 2000000,
+      "mint": "6kbwsSY4hL6WVadLRLnWV2irkMN2AvFZVAS8McKJmAtJ",
+      "owner": "Owner123",
+      "amount_raw": 2000000000,
       "state": 0,
       "delegated_amount": 0,
       "delegate": null,

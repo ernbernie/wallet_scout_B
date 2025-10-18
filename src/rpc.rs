@@ -1,11 +1,11 @@
-use crate::errors::{ScoutError, Result};
+use crate::errors::{Result, ScoutError};
+use rand::Rng;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::time::sleep;
-use std::sync::OnceLock;
-use rand::Rng;
 
 // Global singleton HTTP client
 static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
@@ -23,21 +23,21 @@ impl Rpc {
                 .build()
                 .expect("Failed to create HTTP client")
         });
-        
+
         Ok(Self {
             url: url.to_string(),
         })
     }
-    
+
     fn get_client() -> &'static Client {
         HTTP_CLIENT.get().expect("HTTP client not initialized")
     }
 
     /// Make JSON-RPC call with exponential backoff retry
     async fn call<T: for<'de> Deserialize<'de>>(
-        &self, 
-        method: &str, 
-        params: serde_json::Value
+        &self,
+        method: &str,
+        params: serde_json::Value,
     ) -> Result<T> {
         let payload = json!({
             "jsonrpc": "2.0",
@@ -86,7 +86,9 @@ impl Rpc {
         // Check for rate limiting
         if let Some(retry_after) = resp.headers().get("retry-after") {
             if let Ok(seconds) = retry_after.to_str().unwrap_or("0").parse::<u64>() {
-                return Err(ScoutError::RateLimited { retry_after: seconds });
+                return Err(ScoutError::RateLimited {
+                    retry_after: seconds,
+                });
             }
         }
 
@@ -99,23 +101,23 @@ impl Rpc {
         }
 
         let v: serde_json::Value = resp.json().await.map_err(ScoutError::Network)?;
-        
+
         // Check for RPC error in response
         if let Some(error) = v.get("error") {
             let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1) as i32;
-            let message = error.get("message")
+            let message = error
+                .get("message")
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown RPC error")
                 .to_string();
-            
+
             return Err(ScoutError::Rpc { code, message });
         }
 
-        serde_json::from_value(v["result"].clone())
-            .map_err(|e| ScoutError::Rpc {
-                code: -1,
-                message: format!("Failed to deserialize response: {}", e),
-            })
+        serde_json::from_value(v["result"].clone()).map_err(|e| ScoutError::Rpc {
+            code: -1,
+            message: format!("Failed to deserialize response: {}", e),
+        })
     }
 
     /// Get SOL balance for an address
@@ -125,10 +127,9 @@ impl Rpc {
             value: u64,
         }
 
-        let r: BalanceResponse = self.call(
-            "getBalance",
-            json!([addr, {"commitment": "confirmed"}])
-        ).await?;
+        let r: BalanceResponse = self
+            .call("getBalance", json!([addr, {"commitment": "confirmed"}]))
+            .await?;
 
         // Convert lamports to SOL (1 SOL = 1,000,000,000 lamports)
         Ok(r.value as f64 / 1_000_000_000.0)
@@ -140,13 +141,13 @@ impl Rpc {
         struct AccountData {
             data: (String, String), // (base64_data, encoding)
         }
-        
+
         #[derive(Deserialize)]
         struct Account {
             pubkey: String,
             account: AccountData,
         }
-        
+
         #[derive(Deserialize)]
         struct TokenAccountsResponse {
             value: Vec<Account>,
@@ -154,24 +155,32 @@ impl Rpc {
 
         // SPL Token program ID
         let program = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-        
-        let r: TokenAccountsResponse = self.call(
-            "getTokenAccountsByOwner",
-            json!([
-                addr,
-                {"programId": program},
-                {"encoding": "base64", "commitment": "confirmed"}
-            ])
-        ).await?;
 
-        Ok(r.value.into_iter().map(|v| TokenUi {
-            pubkey: v.pubkey,
-            data_base64: v.account.data.0,
-        }).collect())
+        let r: TokenAccountsResponse = self
+            .call(
+                "getTokenAccountsByOwner",
+                json!([
+                    addr,
+                    {"programId": program},
+                    {"encoding": "base64", "commitment": "confirmed"}
+                ]),
+            )
+            .await?;
+
+        Ok(r.value
+            .into_iter()
+            .map(|v| TokenUi {
+                pubkey: v.pubkey,
+                data_base64: v.account.data.0,
+            })
+            .collect())
     }
 
     /// Get multiple accounts in a single batch call
-    pub async fn get_multiple_accounts_base64(&self, pubkeys: &[String]) -> Result<Vec<Option<AccountData>>> {
+    pub async fn get_multiple_accounts_base64(
+        &self,
+        pubkeys: &[String],
+    ) -> Result<Vec<Option<AccountData>>> {
         #[derive(Deserialize)]
         struct RpcAccountData {
             data: (String, String), // (base64_data, encoding)
@@ -180,27 +189,34 @@ impl Rpc {
             owner: String,
             rent_epoch: u64,
         }
-        
+
         #[derive(Deserialize)]
         struct MultipleAccountsResponse {
             value: Vec<Option<RpcAccountData>>,
         }
 
-        let r: MultipleAccountsResponse = self.call(
-            "getMultipleAccounts",
-            json!([
-                pubkeys,
-                {"encoding": "base64", "commitment": "confirmed"}
-            ])
-        ).await?;
+        let r: MultipleAccountsResponse = self
+            .call(
+                "getMultipleAccounts",
+                json!([
+                    pubkeys,
+                    {"encoding": "base64", "commitment": "confirmed"}
+                ]),
+            )
+            .await?;
 
-        Ok(r.value.into_iter().map(|opt| opt.map(|acc| AccountData {
-            data: acc.data,
-            executable: acc.executable,
-            lamports: acc.lamports,
-            owner: acc.owner,
-            rent_epoch: acc.rent_epoch,
-        })).collect())
+        Ok(r.value
+            .into_iter()
+            .map(|opt| {
+                opt.map(|acc| AccountData {
+                    data: acc.data,
+                    executable: acc.executable,
+                    lamports: acc.lamports,
+                    owner: acc.owner,
+                    rent_epoch: acc.rent_epoch,
+                })
+            })
+            .collect())
     }
 }
 

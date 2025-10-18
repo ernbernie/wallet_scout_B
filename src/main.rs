@@ -1,16 +1,16 @@
-use clap::{Parser, ValueEnum};
 use anyhow::Result;
+use clap::{Parser, ValueEnum};
 use std::io::{self, Write};
 use std::time::Duration;
-use tracing::{info, warn, error};
+use tracing::info;
 
-mod rpc;
-mod parse;
-mod view;
-mod errors;
 mod analysis;
-mod patterns;
+mod errors;
 mod metrics;
+mod parse;
+mod patterns;
+mod rpc;
+mod view;
 
 use errors::ScoutError;
 
@@ -29,11 +29,11 @@ impl Cluster {
             Cluster::Testnet => "https://api.testnet.solana.com",
         }
     }
-    
+
     fn name(self) -> &'static str {
         match self {
             Cluster::Mainnet => "mainnet",
-            Cluster::Devnet => "devnet", 
+            Cluster::Devnet => "devnet",
             Cluster::Testnet => "testnet",
         }
     }
@@ -47,43 +47,43 @@ struct Args {
     /// Wallet address (base58). If omitted, you'll be prompted.
     #[arg(long)]
     address: Option<String>,
-    
+
     /// Cluster selection (default: devnet). If omitted, you'll be prompted.
     #[arg(long, value_enum)]
     cluster: Option<Cluster>,
-    
+
     /// Output JSON instead of a table
     #[arg(long)]
     json: bool,
-    
+
     /// Show debug information with raw offsets and data
     #[arg(long)]
     debug: bool,
-    
+
     /// Run wallet analysis and show insights
     #[arg(long)]
     analyze: bool,
-    
+
     /// Show only high-risk wallets
     #[arg(long)]
     risk_level: Option<String>,
-    
+
     /// Custom RPC URL (overrides cluster selection)
     #[arg(long)]
     rpc_url: Option<String>,
-    
+
     /// Global timeout in seconds for the entire operation
     #[arg(long, default_value = "60")]
     global_timeout: u64,
-    
+
     /// Write metrics to file
     #[arg(long)]
     metrics_file: Option<String>,
-    
+
     /// Log level (error, warn, info, debug, trace)
     #[arg(long, default_value = "info")]
     log_level: String,
-    
+
     /// Show summary dashboard (default behavior)
     #[arg(long)]
     summary: bool,
@@ -92,24 +92,29 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(&args.log_level)
         .init();
-    
-    info!("Starting wallet scout with global timeout: {}s", args.global_timeout);
-    
+
+    info!(
+        "Starting wallet scout with global timeout: {}s",
+        args.global_timeout
+    );
+
     // Set up global timeout
     let global_timeout = Duration::from_secs(args.global_timeout);
-    let timeout_result = tokio::time::timeout(global_timeout, async {
-        run_wallet_scout(args).await
-    }).await;
-    
+    let timeout_result =
+        tokio::time::timeout(global_timeout, async { run_wallet_scout(args).await }).await;
+
     match timeout_result {
         Ok(result) => result,
         Err(_) => {
-            eprintln!("Operation timed out after {} seconds", global_timeout.as_secs());
+            eprintln!(
+                "Operation timed out after {} seconds",
+                global_timeout.as_secs()
+            );
             std::process::exit(124); // Standard timeout exit code
         }
     }
@@ -117,7 +122,7 @@ async fn main() -> Result<()> {
 
 async fn run_wallet_scout(args: Args) -> Result<()> {
     let mut metrics = metrics::MetricsCollector::new();
-    
+
     // Prompt for address if missing
     let address = match args.address {
         Some(a) => a,
@@ -131,10 +136,11 @@ async fn run_wallet_scout(args: Args) -> Result<()> {
     };
 
     // Validate address early
-    let _pk = bs58::decode(&address).into_vec()
+    let _pk = bs58::decode(&address)
+        .into_vec()
         .map_err(|_| ScoutError::InvalidPubkey(address.clone()))?;
-    if _pk.len() != 32 { 
-        return Err(ScoutError::InvalidPubkey("pubkey must be 32 bytes".to_string()).into()); 
+    if _pk.len() != 32 {
+        return Err(ScoutError::InvalidPubkey("pubkey must be 32 bytes".to_string()).into());
     }
 
     // Prompt for cluster if missing and no custom RPC
@@ -145,9 +151,9 @@ async fn run_wallet_scout(args: Args) -> Result<()> {
                 Some(c) => c,
                 None => {
                     println!("Select network: [1] mainnet  [2] devnet  [3] testnet  (default: 2)");
-                    print!("Choice: "); 
+                    print!("Choice: ");
                     io::stdout().flush().ok();
-                    let mut s = String::new(); 
+                    let mut s = String::new();
                     io::stdin().read_line(&mut s)?;
                     match s.trim() {
                         "1" => Cluster::Mainnet,
@@ -161,7 +167,7 @@ async fn run_wallet_scout(args: Args) -> Result<()> {
     };
 
     println!("Connecting to {}...", rpc_url);
-    
+
     // Initialize RPC client
     let rpc = rpc::Rpc::new(&rpc_url)?;
 
@@ -177,25 +183,28 @@ async fn run_wallet_scout(args: Args) -> Result<()> {
     let mut parsed = Vec::with_capacity(token_accounts.len());
     for item in token_accounts {
         let parse_start = std::time::Instant::now();
-        
-        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &item.data_base64)
-            .map_err(|e| ScoutError::Decode {
-                field: "base64_data".to_string(),
-                expected: "valid base64".to_string(),
-                got: format!("invalid base64: {}", e),
-            })?;
-        
+
+        let bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &item.data_base64,
+        )
+        .map_err(|e| ScoutError::Decode {
+            field: "base64_data".to_string(),
+            expected: "valid base64".to_string(),
+            got: format!("invalid base64: {}", e),
+        })?;
+
         let view = parse::parse_spl_token_account(&bytes)?;
-        
+
         // Record parse time
         metrics.record_parse_time(parse_start.elapsed());
-        
+
         // Show debug info if requested
         if args.debug {
             view::print_debug(&view);
             println!();
         }
-        
+
         parsed.push(view::TokenRow::from_view(item.pubkey, &view));
     }
 
@@ -204,7 +213,7 @@ async fn run_wallet_scout(args: Args) -> Result<()> {
         println!("Running wallet analysis...");
         let analyzer = analysis::WalletAnalyzer::new();
         let insights = analyzer.analyze(&parsed);
-        
+
         if args.json {
             println!("{}", serde_json::to_string_pretty(&insights)?);
         } else {
@@ -243,12 +252,12 @@ fn print_analysis(insights: &analysis::WalletInsights) -> anyhow::Result<()> {
     println!("│ Wallet Analysis Report                                                          │");
     println!("└─────────────────────────────────────────────────────────────────────────────────┘");
     println!();
-    
+
     // Wallet type and risk level
     println!("🔍 Wallet Type: {:?}", insights.wallet_type);
     println!("⚠️  Risk Level: {:?}", insights.risk_level);
     println!();
-    
+
     // Statistics
     println!("📊 Statistics:");
     println!("  • Total Accounts: {}", insights.statistics.total_accounts);
@@ -258,41 +267,57 @@ fn print_analysis(insights: &analysis::WalletInsights) -> anyhow::Result<()> {
     println!("  • Avg Amount: {}", insights.statistics.avg_amount);
     println!("  • Amount Variance: {:.2}", insights.statistics.variance);
     println!();
-    
+
     // Account distribution
     println!("📈 Account Distribution:");
-    println!("  • Empty: {} ({:.1}%)", 
+    println!(
+        "  • Empty: {} ({:.1}%)",
         insights.statistics.empty_accounts,
-        (insights.statistics.empty_accounts as f64 / insights.statistics.total_accounts as f64) * 100.0);
-    println!("  • Small: {} ({:.1}%)", 
+        (insights.statistics.empty_accounts as f64 / insights.statistics.total_accounts as f64)
+            * 100.0
+    );
+    println!(
+        "  • Small: {} ({:.1}%)",
         insights.statistics.small_accounts,
-        (insights.statistics.small_accounts as f64 / insights.statistics.total_accounts as f64) * 100.0);
-    println!("  • Medium: {} ({:.1}%)", 
+        (insights.statistics.small_accounts as f64 / insights.statistics.total_accounts as f64)
+            * 100.0
+    );
+    println!(
+        "  • Medium: {} ({:.1}%)",
         insights.statistics.medium_accounts,
-        (insights.statistics.medium_accounts as f64 / insights.statistics.total_accounts as f64) * 100.0);
-    println!("  • Large: {} ({:.1}%)", 
+        (insights.statistics.medium_accounts as f64 / insights.statistics.total_accounts as f64)
+            * 100.0
+    );
+    println!(
+        "  • Large: {} ({:.1}%)",
         insights.statistics.large_accounts,
-        (insights.statistics.large_accounts as f64 / insights.statistics.total_accounts as f64) * 100.0);
+        (insights.statistics.large_accounts as f64 / insights.statistics.total_accounts as f64)
+            * 100.0
+    );
     println!();
-    
+
     // Detected patterns
     if !insights.patterns.is_empty() {
         println!("🎯 Detected Patterns:");
         for pattern in &insights.patterns {
-            println!("  • {} (confidence: {:.1}%, risk: {:?})", 
-                pattern.name, pattern.confidence * 100.0, pattern.risk_level);
+            println!(
+                "  • {} (confidence: {:.1}%, risk: {:?})",
+                pattern.name,
+                pattern.confidence * 100.0,
+                pattern.risk_level
+            );
             for evidence in &pattern.evidence {
                 println!("    - {}", evidence);
             }
         }
         println!();
     }
-    
+
     // Summary
     println!("📝 Summary:");
     println!("  {}", insights.summary);
     println!();
-    
+
     // Recommendations
     if !insights.recommendations.is_empty() {
         println!("💡 Recommendations:");
@@ -301,6 +326,6 @@ fn print_analysis(insights: &analysis::WalletInsights) -> anyhow::Result<()> {
         }
         println!();
     }
-    
+
     Ok(())
 }
